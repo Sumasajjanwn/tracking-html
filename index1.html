@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Automatic Bus Tracking Test</title>
+  <style>
+    #map {
+      height: 400px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid black;
+      padding: 5px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h2>Automatic Bus Tracking Test</h2>
+  <div id="map"></div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Latitude</th>
+        <th>Longitude</th>
+        <th>Time</th>
+      </tr>
+    </thead>
+    <tbody id="locationTable">
+    </tbody>
+  </table>
+
+  <!-- Google Maps API -->
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap"
+    async defer
+  ></script>
+
+  <script>
+    let map;
+    let busMarker;
+    let count = 0;
+
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        zoom: 14,
+        center: { lat: 17.3850, lng: 78.4867 }
+      });
+
+      busMarker = new google.maps.Marker({
+        map: map,
+        title: "Bus Location"
+      });
+
+      // Start sending location automatically every 5 sec
+      startAutoSendLocation();
+    }
+
+    function startAutoSendLocation() {
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported by your browser.");
+        return;
+      }
+
+      setInterval(() => {
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const time = new Date().toLocaleTimeString();
+
+          // Update table
+          count++;
+          const row = document.createElement("tr");
+          row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${time}</td>`;
+          document.getElementById("locationTable").appendChild(row);
+
+          // Update map marker
+          const pos = new google.maps.LatLng(lat, lng);
+          busMarker.setPosition(pos);
+          map.setCenter(pos);
+
+          // Send to backend
+          try {
+            const response = await fetch("https://bustrackingapi-2.onrender.com/api/update", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ bus_id: "bus101", lat, lng })
+            });
+            const result = await response.json();
+            console.log("Location sent:", result);
+          } catch (err) {
+            console.error("Error sending location:", err);
+          }
+        }, (err) => {
+          console.error("Error getting GPS:", err);
+        });
+      }, 5000); // every 5 sec
+    }
+  </script>
+</body>
+</html>
