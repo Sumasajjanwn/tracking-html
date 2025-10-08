@@ -1,21 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Live Bus GPS Tracker</title>
-  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+  <title>Automatic Bus Tracking Test</title>
   <style>
-    body { font-family: Arial; padding: 15px; }
-    #map { width: 100%; height: 400px; margin-bottom: 10px; border-radius: 10px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid black; padding: 5px; text-align: center; }
-    h2 { margin-bottom: 5px; }
+    #map {
+      height: 400px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid black;
+      padding: 5px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <h2>🚌 Live Bus GPS Tracker</h2>
-  <p>Tracks bus, updates Supabase, shows route on Google Maps.</p>
-
+  <h2>Automatic Bus Tracking Test</h2>
   <div id="map"></div>
 
   <table>
@@ -30,101 +36,97 @@
     <tbody id="locationTable"></tbody>
   </table>
 
+  <!-- ✅ Google Maps API -->
+  <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap">
+  </script>
+
+  <!-- ✅ Supabase client -->
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
   <script>
-    // ---------------------------
-    // 1️⃣ Supabase Configuration
-    // ---------------------------
+    // ✅ Supabase configuration (already given)
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
-    const BUS_ID = "BUS_101"; // Using string as bus ID
 
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    // ✅ Initialize Supabase
+    const { createClient } = supabase;
+    const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    /**
-     * Store GPS location in Supabase
-     * @param {number} lat
-     * @param {number} lng
-     */
-    async function storeLocation(lat, lng) {
-      const timestamp = new Date().toISOString();
-      try {
-        // Insert into bus_locations (history)
-        await supabase.from('bus_locations').insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }]);
+    const BUS_ID = "BUS_101"; // static id
+    let map, busMarker, count = 0;
 
-        // Upsert latest_positions
-        await supabase.from('latest_positions').upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }]);
-
-        console.log(`✅ Sent location to Supabase: ${lat}, ${lng}`);
-      } catch (err) {
-        console.error("Supabase error:", err);
-      }
-    }
-
-    // ---------------------------
-    // 2️⃣ Google Maps & Tracking
-    // ---------------------------
-    let map, busMarker, busPath, count = 0;
-    let pathCoordinates = [];
-
+    // ✅ Initialize Google Map
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
-        zoom: 15,
-        center: { lat: 17.3850, lng: 78.4867 } // default starting point
+        zoom: 14,
+        center: { lat: 17.3850, lng: 78.4867 } // Default (Hyderabad)
       });
 
-      busMarker = new google.maps.Marker({ map: map, title: "Bus Location" });
-
-      busPath = new google.maps.Polyline({
+      busMarker = new google.maps.Marker({
         map: map,
-        path: pathCoordinates,
-        geodesic: true,
-        strokeColor: '#FF0000',
-        strokeOpacity: 0.8,
-        strokeWeight: 4
+        title: "Bus Current Location"
       });
 
-      startTracking();
+      // Start sending data automatically
+      startAutoSendLocation();
     }
 
-    function startTracking() {
+    // ✅ Start GPS + Supabase update loop
+    function startAutoSendLocation() {
       if (!navigator.geolocation) {
-        alert("Geolocation not supported by your browser.");
+        alert("❌ Geolocation not supported by your browser.");
         return;
       }
 
-      navigator.geolocation.watchPosition((position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-        const time = new Date().toLocaleTimeString();
+      setInterval(() => {
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const time = new Date().toLocaleTimeString();
 
-        // Update table
-        count++;
-        const row = document.createElement("tr");
-        row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${time}</td>`;
-        document.getElementById("locationTable").appendChild(row);
+          // Update table row
+          count++;
+          const row = document.createElement("tr");
+          row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${time}</td>`;
+          document.getElementById("locationTable").appendChild(row);
 
-        // Update map marker
-        const pos = { lat, lng };
-        busMarker.setPosition(pos);
-        map.setCenter(pos);
+          // Update marker on map
+          const pos = new google.maps.LatLng(lat, lng);
+          busMarker.setPosition(pos);
+          map.setCenter(pos);
 
-        // Update polyline path
-        pathCoordinates.push(pos);
-        busPath.setPath(pathCoordinates);
+          try {
+            // Insert into bus_locations
+            const { error: insertError } = await client
+              .from("bus_locations")
+              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng }]);
 
-        // Store in Supabase
-        storeLocation(lat, lng);
+            if (insertError) throw insertError;
 
-      }, (err) => {
-        console.error("Error getting GPS:", err);
-        alert("Error getting location: " + err.message);
-      }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+            // Upsert into latest_positions
+            const { error: upsertError } = await client
+              .from("latest_positions")
+              .upsert([
+                {
+                  bus_id: BUS_ID,
+                  latitude: lat,
+                  longitude: lng,
+                  updated_at: new Date().toISOString()
+                }
+              ]);
+
+            if (upsertError) throw upsertError;
+
+            console.log(`✅ Sent location: ${lat}, ${lng} at ${time}`);
+          } catch (err) {
+            console.error("❌ Error sending to Supabase:", err.message);
+          }
+        }, (err) => {
+          console.error("❌ Error getting GPS:", err);
+        });
+      }, 5000); // every 5 seconds
     }
-  </script>
-
-  <!-- Google Maps API -->
-  <script async defer
-    src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap">
   </script>
 </body>
 </html>
