@@ -36,46 +36,46 @@
     <tbody id="locationTable"></tbody>
   </table>
 
-  <!-- ✅ Google Maps API -->
-  <script async defer
-    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap">
-  </script>
+  <!-- Google Maps API -->
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap"
+    async defer
+  ></script>
 
-  <!-- ✅ Supabase client -->
+  <!-- Supabase client -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
   <script>
-    // ✅ Supabase configuration (already given)
+    // ✅ Supabase setup
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
+    const BUS_ID = "BUS_101";
 
-    // ✅ Initialize Supabase
+    // ✅ Correct Supabase initialization (fixes earlier bug)
     const { createClient } = supabase;
-    const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const BUS_ID = "BUS_101"; // static id
-    let map, busMarker, count = 0;
+    let map;
+    let busMarker;
+    let count = 0;
 
-    // ✅ Initialize Google Map
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
         zoom: 14,
-        center: { lat: 17.3850, lng: 78.4867 } // Default (Hyderabad)
+        center: { lat: 17.3850, lng: 78.4867 } // Default starting point
       });
 
       busMarker = new google.maps.Marker({
         map: map,
-        title: "Bus Current Location"
+        title: "Bus Location"
       });
 
-      // Start sending data automatically
-      startAutoSendLocation();
+      startAutoSendLocation(); // Start GPS tracking loop
     }
 
-    // ✅ Start GPS + Supabase update loop
     function startAutoSendLocation() {
       if (!navigator.geolocation) {
-        alert("❌ Geolocation not supported by your browser.");
+        alert("Geolocation not supported by your browser.");
         return;
       }
 
@@ -85,28 +85,28 @@
           const lng = position.coords.longitude;
           const time = new Date().toLocaleTimeString();
 
-          // Update table row
+          // Update table
           count++;
           const row = document.createElement("tr");
           row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${time}</td>`;
           document.getElementById("locationTable").appendChild(row);
 
-          // Update marker on map
+          // Update map marker
           const pos = new google.maps.LatLng(lat, lng);
           busMarker.setPosition(pos);
           map.setCenter(pos);
 
+          // ✅ Store data to Supabase
           try {
-            // Insert into bus_locations
-            const { error: insertError } = await client
-              .from("bus_locations")
+            // Insert new record into bus_locations
+            const { error: insertError } = await db
+              .from('bus_locations')
               .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng }]);
-
             if (insertError) throw insertError;
 
-            // Upsert into latest_positions
-            const { error: upsertError } = await client
-              .from("latest_positions")
+            // Upsert (update or insert) into latest_positions
+            const { error: upsertError } = await db
+              .from('latest_positions')
               .upsert([
                 {
                   bus_id: BUS_ID,
@@ -115,10 +115,9 @@
                   updated_at: new Date().toISOString()
                 }
               ]);
-
             if (upsertError) throw upsertError;
 
-            console.log(`✅ Sent location: ${lat}, ${lng} at ${time}`);
+            console.log(`✅ Stored location: ${lat}, ${lng} at ${time}`);
           } catch (err) {
             console.error("❌ Error sending to Supabase:", err.message);
           }
