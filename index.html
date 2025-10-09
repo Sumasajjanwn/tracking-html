@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Bus Live Tracking</title>
+  <title>Bus Live Tracking with Route</title>
   <style>
-    #map { height: 400px; width: 100%; margin-bottom: 10px; }
+    #map { height: 500px; width: 100%; margin-bottom: 10px; }
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { border: 1px solid black; padding: 5px; text-align: center; }
   </style>
 </head>
 <body>
-  <h2>Bus Live Tracking</h2>
+  <h2>Bus Live Tracking with Route</h2>
   <div id="map"></div>
   <table>
     <thead>
@@ -25,11 +25,11 @@
 
   <!-- Google Maps API -->
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap" async defer></script>
+  
   <!-- Supabase JS -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
   <script>
-    // ------------------ Supabase Setup ------------------
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
     const BUS_ID = "7f1f1e10-0003-0000-0000-000000000003";
@@ -37,78 +37,94 @@
     const { createClient } = supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    let map, busMarker, count = 0;
+    let map, busMarker, routePath;
+    let count = 0;
 
-    // ------------------ Initialize Google Map ------------------
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
-        zoom: 14,
+        zoom: 15,
         center: { lat: 17.3850, lng: 78.4867 }
       });
 
-      busMarker = new google.maps.Marker({ map: map, title: "Bus Location" });
-      startTracking();
+      busMarker = new google.maps.Marker({
+        map: map,
+        title: "Bus Current Location"
+      });
+
+      routePath = new google.maps.Polyline({
+        path: [],
+        geodesic: true,
+        strokeColor: "#0000FF",
+        strokeOpacity: 0.7,
+        strokeWeight: 4
+      });
+      routePath.setMap(map);
+
+      startAutoSendLocation();
     }
 
-    // ------------------ GPS Tracking ------------------
-    function startTracking() {
-      if (!navigator.geolocation) { alert("Geolocation not supported"); return; }
+    function startAutoSendLocation() {
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported by your browser");
+        return;
+      }
 
-      setInterval(() => {
+      setInterval(async () => {
         navigator.geolocation.getCurrentPosition(async (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
           const timestamp = new Date().toISOString();
           const displayTime = new Date(timestamp).toLocaleTimeString();
 
-          // Update table
+          // Update table UI
           count++;
           const row = document.createElement("tr");
           row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${displayTime}</td>`;
           document.getElementById("locationTable").appendChild(row);
 
-          // Update map
-          const pos = new google.maps.LatLng(lat, lng);
+          // Update map marker
+          const pos = { lat, lng };
           busMarker.setPosition(pos);
           map.setCenter(pos);
 
           try {
-            // 1️⃣ Insert into bus_locations
+            // 1️⃣ Store in bus_locations
             const { error: locErr } = await db
               .from('bus_locations')
-              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }]);
+              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, timestamp }]);
             if (locErr) throw locErr;
 
-            // 2️⃣ Upsert into latest_positions
+            // 2️⃣ Upsert latest position
             const { error: latestErr } = await db
               .from('latest_positions')
-              .upsert(
-                [{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }],
-                { onConflict: ['bus_id'] } // primary key conflict
-              );
+              .upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }],
+                      { onConflict: ['bus_id'] });
             if (latestErr) throw latestErr;
 
-            // 3️⃣ Update trips table
-            const { error: tripErr } = await db
-              .from('trips')
-              .update({ current_lat: lat, current_lng: lng, status: 'running' })
-              .eq('bus_id', BUS_ID);
-            if (tripErr) throw tripErr;
+            // 3️⃣ Update trip + bus status
+            await db.from('trips').update({ current_lat: lat, current_lng: lng }).eq('bus_id', BUS_ID);
+            await db.from('buses').update({ active: true }).eq('bus_id', BUS_ID);
 
-            // 4️⃣ Update buses table example (active status)
-            const { error: busErr } = await db
-              .from('buses')
-              .update({ active: true })
-              .eq('bus_id', BUS_ID);
-            if (busErr) throw busErr;
+            console.log("✅ Location stored:", lat, lng);
 
-            console.log(`✅ Updated all tables at ${displayTime}`);
+            // 4️⃣ Fetch last 20 points to draw route
+            const { data: recent, error: routeErr } = await db
+              .from('bus_locations')
+              .select('latitude, longitude')
+              .eq('bus_id', BUS_ID)
+              .order('timestamp', { ascending: false })
+              .limit(20);
+            if (routeErr) throw routeErr;
+
+            const path = recent.reverse().map(p => ({ lat: p.latitude, lng: p.longitude }));
+            routePath.setPath(path);
+
           } catch (err) {
-            console.error("Supabase error:", err.message);
+            console.error("❌ Supabase Error:", err.message);
           }
 
-        }, (err) => { console.error("GPS error:", err); });
-      }, 5000); // every 5 seconds
+        }, (err) => console.error("GPS Error:", err));
+      }, 5000); // Every 5 seconds
     }
   </script>
 </body>
