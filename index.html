@@ -17,16 +17,20 @@
         <th>#</th>
         <th>Latitude</th>
         <th>Longitude</th>
-        <th>Time</th>
+        <th>Date & Time (IST)</th>
       </tr>
     </thead>
     <tbody id="locationTable"></tbody>
   </table>
 
+  <!-- Google Maps API -->
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap" async defer></script>
+
+  <!-- Supabase JS -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 
   <script>
+    // ------------------ Supabase Setup ------------------
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
     const BUS_ID = "7f1f1e10-0003-0000-0000-000000000003";
@@ -36,6 +40,7 @@
 
     let map, busMarker, count = 0;
 
+    // ------------------ Initialize Google Map ------------------
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
         zoom: 14,
@@ -46,55 +51,69 @@
       startTracking();
     }
 
+    // ------------------ GPS Tracking ------------------
     function startTracking() {
-      if (!navigator.geolocation) { alert("Geolocation not supported"); return; }
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported");
+        return;
+      }
 
       setInterval(() => {
         navigator.geolocation.getCurrentPosition(async (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
-          const timestamp = new Date().toISOString();
-          const displayTime = new Date(timestamp).toLocaleTimeString();
 
+          // ✅ Use Indian Standard Time (IST)
+          const now = new Date();
+          const displayDate = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
+          const displayTime = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
+          const fullTimestamp = `${displayDate} ${displayTime}`;
+
+          // Update table
           count++;
           const row = document.createElement("tr");
-          row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${displayTime}</td>`;
+          row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${fullTimestamp}</td>`;
           document.getElementById("locationTable").appendChild(row);
 
+          // Update map
           const pos = new google.maps.LatLng(lat, lng);
           busMarker.setPosition(pos);
-          if (count === 1) map.setCenter(pos);
+          map.setCenter(pos);
 
           try {
+            // 1️⃣ Insert into bus_locations
             const { error: locErr } = await db
               .from('bus_locations')
-              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, timestamp }]);
+              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: fullTimestamp }]);
             if (locErr) throw locErr;
 
+            // 2️⃣ Upsert into latest_positions
             const { error: latestErr } = await db
               .from('latest_positions')
-              .upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: timestamp }], { onConflict: ['bus_id'] });
+              .upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: fullTimestamp }], { onConflict: ['bus_id'] });
             if (latestErr) throw latestErr;
 
+            // 3️⃣ Update trips table
             const { error: tripErr } = await db
               .from('trips')
               .update({ current_lat: lat, current_lng: lng, status: 'running' })
               .eq('bus_id', BUS_ID);
             if (tripErr) throw tripErr;
 
+            // 4️⃣ Update buses table (set active = true)
             const { error: busErr } = await db
               .from('buses')
               .update({ active: true })
               .eq('bus_id', BUS_ID);
             if (busErr) throw busErr;
 
-            console.log(`✅ Updated all tables at ${displayTime}`);
+            console.log(`✅ Updated all tables at ${fullTimestamp}`);
           } catch (err) {
-            console.error("Supabase error:", err.message);
+            console.error("❌ Supabase error:", err.message);
           }
 
-        }, (err) => console.error("GPS error:", err));
-      }, 5000);
+        }, (err) => console.error("❌ GPS error:", err));
+      }, 5000); // every 5 seconds
     }
   </script>
 </body>
