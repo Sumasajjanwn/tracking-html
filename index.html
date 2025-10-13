@@ -3,71 +3,84 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bus Mobile Tracker</title>
+  <title>Mobile Bus GPS Tracker</title>
   <style>
     body { font-family: Arial; padding: 20px; }
     h2 { margin-bottom: 10px; }
-    #status { margin-top: 10px; font-weight: bold; }
+    input, button { padding: 10px; margin: 5px 0; width: 100%; }
+    #status { margin-top: 15px; font-weight: bold; color: green; }
   </style>
 </head>
 <body>
   <h2>Bus GPS Tracker (Mobile)</h2>
-  <p>Enter Bus Number:</p>
-  <input type="text" id="busNumberInput" placeholder="Bus Number">
+
+  <input type="text" id="busNumberInput" placeholder="Enter Bus Number">
   <button id="startBtn">Start Tracking</button>
 
-  <div id="status"></div>
+  <div id="status">Waiting for input...</div>
 
-  <!-- Supabase -->
+  <!-- Supabase JS -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
   <script>
+    // -------------------- Supabase Setup --------------------
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
-
     const { createClient } = supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // -------------------- DOM Elements --------------------
     const busNumberInput = document.getElementById("busNumberInput");
     const startBtn = document.getElementById("startBtn");
     const statusDiv = document.getElementById("status");
 
     let BUS_ID = null;
 
+    // -------------------- Start Tracking --------------------
     startBtn.onclick = async () => {
       const busNumber = busNumberInput.value.trim();
-      if (!busNumber) return alert("Enter Bus Number");
+      if (!busNumber) return alert("Please enter Bus Number");
 
       statusDiv.innerText = "Initializing...";
 
       try {
-        // Step 1: Check if bus exists
-        let { data: buses } = await db.from("buses").select("bus_id").eq("bus_number", busNumber).limit(1);
+        // 1️⃣ Check if bus exists
+        const { data: buses, error: fetchError } = await db
+          .from("buses")
+          .select("bus_id")
+          .eq("bus_number", busNumber)
+          .limit(1);
 
-        if (buses.length > 0) {
+        if (fetchError) throw fetchError;
+
+        if (buses && buses.length > 0) {
           BUS_ID = buses[0].bus_id;
           statusDiv.innerText = `Bus found! ID: ${BUS_ID}`;
         } else {
-          // Step 2: Create new bus
-          const { data: newBus } = await db.from("buses")
+          // 2️⃣ Create new bus if not exists
+          const { data: newBus, error: insertError } = await db
+            .from("buses")
             .insert([{ bus_number: busNumber, route: "Unknown" }])
             .select()
             .single();
+
+          if (insertError) throw insertError;
+
           BUS_ID = newBus.bus_id;
           statusDiv.innerText = `New bus created! ID: ${BUS_ID}`;
         }
 
-        // Step 3: Start GPS tracking
-        startTracking();
+        // 3️⃣ Start GPS tracking
+        startGPS();
 
       } catch (err) {
-        console.error(err);
-        statusDiv.innerText = "Error initializing bus";
+        console.error("Error initializing bus:", err);
+        statusDiv.innerText = "Error initializing bus: " + (err.message || JSON.stringify(err));
       }
     };
 
-    function startTracking() {
+    function startGPS() {
       if (!navigator.geolocation) {
-        alert("Geolocation not supported");
+        alert("Geolocation not supported on this device");
         return;
       }
 
@@ -79,13 +92,13 @@
           const lng = position.coords.longitude;
           const updated_at = new Date().toISOString();
 
-          statusDiv.innerText = `Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${updated_at}`;
+          statusDiv.innerText = `Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${new Date().toLocaleTimeString()}`;
 
           try {
-            // Insert into bus_locations
+            // ✅ Insert into bus_locations
             await db.from("bus_locations").insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }]);
 
-            // Upsert latest_positions
+            // ✅ Upsert into latest_positions
             await db.from("latest_positions").upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }], { onConflict: ["bus_id"] });
 
           } catch (err) {
