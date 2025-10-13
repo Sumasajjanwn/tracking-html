@@ -12,7 +12,7 @@
 </head>
 <body>
   <h2>Bus GPS Tracker</h2>
-  <input type="text" id="busNumberInput" placeholder="Enter Bus Number">
+  <input type="text" id="busIdInput" placeholder="Enter Existing Bus ID">
   <button id="startBtn">Start Tracking</button>
   <div id="status">Waiting for input...</div>
 
@@ -24,7 +24,7 @@
     const { createClient } = supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    const busNumberInput = document.getElementById("busNumberInput");
+    const busIdInput = document.getElementById("busIdInput");
     const startBtn = document.getElementById("startBtn");
     const statusDiv = document.getElementById("status");
 
@@ -38,43 +38,35 @@
     }
 
     startBtn.onclick = async () => {
-      const busNumber = busNumberInput.value.trim();
-      if (!busNumber) return alert("Enter Bus Number");
+      const busId = busIdInput.value.trim();
+      if (!busId) return alert("Enter Bus ID");
 
-      statusDiv.innerText = "Initializing...";
+      statusDiv.innerText = "Checking Bus ID...";
 
       try {
+        // Check if bus exists
         const { data: buses, error: fetchError } = await db.from("buses")
-          .select("bus_id")
-          .eq("bus_number", busNumber)
+          .select("bus_id, bus_number")
+          .eq("bus_id", busId)
           .limit(1);
+
         if (fetchError) throw fetchError;
-
-        if (buses.length > 0) {
-          BUS_ID = buses[0].bus_id;
-          statusDiv.innerText = `Bus found! ID: ${BUS_ID}`;
-        } else {
-          const { data: newBus, error: insertError } = await db.from("buses")
-            .insert([{ bus_number: busNumber, route: "Unknown" }])
-            .select()
-            .single();
-          if (insertError) throw insertError;
-
-          BUS_ID = newBus.bus_id;
-          statusDiv.innerText = `New bus created! ID: ${BUS_ID}`;
+        if (!buses || buses.length === 0) {
+          return statusDiv.innerText = "Error: Bus ID does not exist!";
         }
+
+        BUS_ID = busId;
+        statusDiv.innerText = `Bus found! ID: ${BUS_ID} | Tracking started`;
 
         startTracking();
       } catch (err) {
         console.error(err);
-        statusDiv.innerText = "Error initializing bus: " + err.message;
+        statusDiv.innerText = "Error: " + err.message;
       }
     };
 
     function startTracking() {
       if (!navigator.geolocation) { alert("Geolocation not supported"); return; }
-
-      statusDiv.innerText += " | Tracking started...";
 
       setInterval(() => {
         navigator.geolocation.getCurrentPosition(async (position) => {
@@ -85,11 +77,13 @@
           statusDiv.innerText = `Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})}`;
 
           try {
+            // Insert into bus_locations
             await db.from("bus_locations").insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }]);
+            // Update latest_positions
             await db.from("latest_positions").upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }], { onConflict: ["bus_id"] });
           } catch (err) {
             console.error("Supabase error:", err);
-            statusDiv.innerText = "Error sending GPS";
+            statusDiv.innerText = "Error sending GPS: " + err.message;
           }
 
         }, (err) => {
