@@ -1,131 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Bus Live Tracking</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bus Mobile Tracker</title>
   <style>
-    #map { height: 400px; width: 100%; margin-bottom: 10px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid black; padding: 5px; text-align: center; }
+    body { font-family: Arial; padding: 20px; }
+    h2 { margin-bottom: 10px; }
+    #status { margin-top: 10px; font-weight: bold; }
   </style>
 </head>
 <body>
-  <h2>Bus Live Tracking</h2>
-  <div id="map"></div>
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Latitude</th>
-        <th>Longitude</th>
-        <th>Date & Time (IST)</th>
-      </tr>
-    </thead>
-    <tbody id="locationTable"></tbody>
-  </table>
+  <h2>Bus GPS Tracker (Mobile)</h2>
+  <p>Enter Bus Number:</p>
+  <input type="text" id="busNumberInput" placeholder="Bus Number">
+  <button id="startBtn">Start Tracking</button>
 
-  <!-- Google Maps API -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKY1AZz2IX1CWtAD6-aun7ViJQb8OEvTo&callback=initMap" async defer></script>
-  
-  <!-- Supabase JS -->
+  <div id="status"></div>
+
+  <!-- Supabase -->
   <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-
   <script>
-    // ------------------ Supabase Setup ------------------
     const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
-    const BUS_ID = "7f1f1e10-0001-0000-0000-000000000001";
 
     const { createClient } = supabase;
     const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    let map, busMarker, count = 0;
+    const busNumberInput = document.getElementById("busNumberInput");
+    const startBtn = document.getElementById("startBtn");
+    const statusDiv = document.getElementById("status");
 
-    // ------------------ IST Timestamp Function ------------------
-    function getISTTimestamp() {
-      const now = new Date();
-      const istOffset = 5.5 * 60; // IST is UTC +5:30
-      const istTime = new Date(now.getTime() + istOffset * 60 * 1000);
-      return istTime.toISOString().replace('Z', '');
-    }
+    let BUS_ID = null;
 
-    function getISTDisplay() {
-      const now = new Date();
-      const displayDate = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' });
-      const displayTime = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
-      return `${displayDate} ${displayTime}`;
-    }
+    startBtn.onclick = async () => {
+      const busNumber = busNumberInput.value.trim();
+      if (!busNumber) return alert("Enter Bus Number");
 
-    // ------------------ Initialize Google Map ------------------
-    function initMap() {
-      map = new google.maps.Map(document.getElementById("map"), {
-        zoom: 14,
-        center: { lat: 17.3850, lng: 78.4867 } // Default starting point
-      });
+      statusDiv.innerText = "Initializing...";
 
-      busMarker = new google.maps.Marker({ map: map, title: "Bus Location" });
-      startTracking();
-    }
+      try {
+        // Step 1: Check if bus exists
+        let { data: buses } = await db.from("buses").select("bus_id").eq("bus_number", busNumber).limit(1);
 
-    // ------------------ GPS Tracking ------------------
+        if (buses.length > 0) {
+          BUS_ID = buses[0].bus_id;
+          statusDiv.innerText = `Bus found! ID: ${BUS_ID}`;
+        } else {
+          // Step 2: Create new bus
+          const { data: newBus } = await db.from("buses")
+            .insert([{ bus_number: busNumber, route: "Unknown" }])
+            .select()
+            .single();
+          BUS_ID = newBus.bus_id;
+          statusDiv.innerText = `New bus created! ID: ${BUS_ID}`;
+        }
+
+        // Step 3: Start GPS tracking
+        startTracking();
+
+      } catch (err) {
+        console.error(err);
+        statusDiv.innerText = "Error initializing bus";
+      }
+    };
+
     function startTracking() {
-      if (!navigator.geolocation) { alert("Geolocation not supported"); return; }
+      if (!navigator.geolocation) {
+        alert("Geolocation not supported");
+        return;
+      }
+
+      statusDiv.innerText += " | Tracking started...";
 
       setInterval(() => {
         navigator.geolocation.getCurrentPosition(async (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
+          const updated_at = new Date().toISOString();
 
-          // ------------------ IST Display ------------------
-          const fullDisplay = getISTDisplay();
-          const istTimestamp = getISTTimestamp(); // For database storage
-
-          // Update table
-          count++;
-          const row = document.createElement("tr");
-          row.innerHTML = `<td>${count}</td><td>${lat.toFixed(6)}</td><td>${lng.toFixed(6)}</td><td>${fullDisplay}</td>`;
-          document.getElementById("locationTable").appendChild(row);
-
-          // Update map marker
-          const pos = new google.maps.LatLng(lat, lng);
-          busMarker.setPosition(pos);
-          map.setCenter(pos);
+          statusDiv.innerText = `Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${updated_at}`;
 
           try {
-            // ------------------ Insert into bus_locations ------------------
-            const { error: locErr } = await db
-              .from('bus_locations')
-              .insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: istTimestamp }]);
-            if (locErr) throw locErr;
+            // Insert into bus_locations
+            await db.from("bus_locations").insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }]);
 
-            // ------------------ Upsert into latest_positions ------------------
-            const { error: latestErr } = await db
-              .from('latest_positions')
-              .upsert(
-                [{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at: istTimestamp }],
-                { onConflict: ['bus_id'] } // PRIMARY/UNIQUE key required
-              );
-            if (latestErr) throw latestErr;
+            // Upsert latest_positions
+            await db.from("latest_positions").upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, updated_at }], { onConflict: ["bus_id"] });
 
-            // ------------------ Update trips table ------------------
-            const { error: tripErr } = await db
-              .from('trips')
-              .update({ current_lat: lat, current_lng: lng, status: 'running' })
-              .eq('bus_id', BUS_ID);
-            if (tripErr) throw tripErr;
-
-            // ------------------ Update buses table ------------------
-            const { error: busErr } = await db
-              .from('buses')
-              .update({ active: true })
-              .eq('bus_id', BUS_ID);
-            if (busErr) throw busErr;
-
-            console.log(`✅ Updated all tables at ${fullDisplay}`);
           } catch (err) {
-            console.error("Supabase error:", err.message);
+            console.error("Supabase error:", err);
+            statusDiv.innerText = "Error sending GPS data";
           }
 
-        }, (err) => console.error("❌ GPS error:", err));
+        }, (err) => {
+          console.error("GPS error:", err);
+          statusDiv.innerText = "GPS error: " + err.message;
+        });
+
       }, 5000); // every 5 seconds
     }
   </script>
