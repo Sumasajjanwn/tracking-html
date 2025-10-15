@@ -1,128 +1,102 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Bus GPS Tracker — Mobile (Driver)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bus GPS Tracker — Driver</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding:20px; max-width:600px; margin:auto; }
-    input, button { width:100%; padding:10px; margin:6px 0; font-size:16px; }
-    #status { margin-top:12px; font-weight:bold; color:green; }
-    .hint { font-size:13px; color:#666; margin-top:6px; }
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #f9fafb;
+      margin: 0;
+      padding: 30px;
+    }
+    h1 { color: #1f2937; }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover { background: #1d4ed8; }
+    #status {
+      margin-top: 20px;
+      font-weight: bold;
+      color: #111827;
+    }
   </style>
 </head>
 <body>
-  <h2>Bus GPS Tracker — Driver</h2>
-  <input id="busIdInput" placeholder="Enter Bus ID (existing)" />
+  <h1>🚌 Bus GPS Tracker — Driver</h1>
+  <h3>Bus ID: <span id="busId">7f1f1e10-0001-0000-0000-000000000001</span></h3>
   <button id="startBtn">Start Tracking (High Accuracy)</button>
-  <button id="stopBtn" style="display:none">Stop Tracking</button>
   <div id="status">Waiting to start...</div>
-  <div class="hint">This page uses the browser/device GPS and will continuously send updates to Supabase. Replace the anon key with server-signed tokens for production.</div>
-
-  <!-- Supabase JS -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/supabase.min.js"></script>
 
   <script>
-  const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
+    // ✅ Supabase connection (replace with your credentials)
+    const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjczNzgyODcsImV4cCI6MjA0Mjk1NDI4N30.gKxqR6M4X1UNzkZKZVdLG7S3KUvDEl5vWAvZt0xchj4";
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-  const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const BUS_ID = document.getElementById("busId").textContent;
+    const startBtn = document.getElementById("startBtn");
+    const statusDiv = document.getElementById("status");
 
-  const busIdInput = document.getElementById("busIdInput");
-  const startBtn = document.getElementById("startBtn");
-  const stopBtn = document.getElementById("stopBtn");
-  const statusDiv = document.getElementById("status");
+    let watching = false;
 
-  let watchId = null;
-  let BUS_ID = null;
-
-  function nowISO() {
-    return new Date().toISOString();
-  }
-
-  async function sendPositionToSupabase(payload) {
-    try {
-      // Insert into history table
-      await supabase.from("bus_locations").insert([payload]);
-      // Update latest positions (upsert)
-      await supabase.from("latest_positions").upsert([payload], { onConflict: ["bus_id"] });
-    } catch (err) {
-      console.error("Supabase write error:", err);
-      statusDiv.innerText = "Send error: " + (err.message || JSON.stringify(err));
-      statusDiv.style.color = "red";
-    }
-  }
-
-  startBtn.onclick = async () => {
-    const busId = busIdInput.value.trim();
-    if (!busId) return alert("Enter Bus ID");
-    // verify bus exists (optional)
-    statusDiv.innerText = "Checking Bus ID...";
-    try {
-      const { data: buses } = await supabase.from("buses").select("bus_id").eq("bus_id", busId).limit(1);
-      if (!buses || buses.length === 0) {
-        // For flexibility, allow starting anyway, but warn
-        if (!confirm("Bus ID not found. Continue using this ID?")) return;
+    startBtn.addEventListener("click", async () => {
+      if (watching) {
+        statusDiv.innerText = "Tracking already active.";
+        return;
       }
-      BUS_ID = busId;
-      statusDiv.innerText = "Starting high-accuracy watchPosition...";
-      startBtn.style.display = "none";
-      stopBtn.style.display = "block";
+      watching = true;
+      statusDiv.innerText = "Starting GPS tracking...";
 
       if (!navigator.geolocation) {
-        alert("Geolocation not supported by this device.");
+        alert("Geolocation not supported by your browser.");
         return;
       }
 
-      // watchPosition gives continuous updates and prefers GPS when enableHighAccuracy true
-      watchId = navigator.geolocation.watchPosition(async (pos) => {
+      navigator.geolocation.watchPosition(async (pos) => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
-        const speed = pos.coords.speed ?? 0; // m/s (may be null)
-        const heading = pos.coords.heading ?? null;
-        const timestamp = new Date(pos.timestamp).toISOString();
+        const speed = pos.coords.speed || 0;
+        const heading = pos.coords.heading || 0;
+        const updated_at = new Date().toISOString();
 
-        const payload = {
-          bus_id: BUS_ID,
-          latitude: lat,
-          longitude: lng,
-          speed: speed,       // m/s
-          heading: heading,   // degrees if available
-          updated_at: timestamp
-        };
+        statusDiv.innerText = `📡 Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
 
-        statusDiv.innerText = `Sending: ${lat.toFixed(6)}, ${lng.toFixed(6)} | speed:${(speed*3.6).toFixed(1)} km/h | ${new Date().toLocaleTimeString('en-IN')}`;
-        statusDiv.style.color = "green";
+        try {
+          // Insert location log
+          await supabase.from("bus_locations").insert([
+            { bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }
+          ]);
 
-        await sendPositionToSupabase(payload);
+          // Update latest position
+          await supabase.from("latest_positions").upsert([
+            { bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }
+          ], { onConflict: ['bus_id'] });
+
+        } catch (err) {
+          console.error("Supabase Error:", err);
+          statusDiv.innerText = "Error sending GPS: " + err.message;
+        }
 
       }, (err) => {
-        console.error("Geolocation error:", err);
-        statusDiv.style.color = "red";
-        statusDiv.innerText = "GPS error: " + (err.message || err.code);
+        console.error("GPS Error:", err);
+        statusDiv.innerText = "GPS Error: " + err.message;
       }, {
         enableHighAccuracy: true,
-        timeout: 20000,
+        timeout: 15000,
         maximumAge: 0
       });
-
-    } catch (err) {
-      console.error(err);
-      statusDiv.innerText = "Error: " + (err.message || JSON.stringify(err));
-      statusDiv.style.color = "red";
-    }
-  };
-
-  stopBtn.onclick = () => {
-    if (watchId !== null) {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-      statusDiv.innerText = "Tracking stopped.";
-    }
-    startBtn.style.display = "block";
-    stopBtn.style.display = "none";
-  };
-
+    });
   </script>
 </body>
 </html>
