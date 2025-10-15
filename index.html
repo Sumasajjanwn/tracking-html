@@ -1,22 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bus GPS Tracker — Driver</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body { font-family: Arial; padding: 30px; background: #f9fafb; text-align: center; }
+    body { font-family: Arial; padding: 30px; text-align: center; background: #f9fafb; }
     h1 { color: #1f2937; }
-    input, button {
-      padding: 12px;
-      font-size: 16px;
-      margin: 8px 0;
-      width: 80%;
-      max-width: 400px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-    }
+    input, button { padding: 12px; font-size: 16px; margin: 8px 0; width: 80%; max-width: 400px; border-radius: 6px; border: 1px solid #ccc; }
     button { background: #2563eb; color: white; border: none; cursor: pointer; }
     button:hover { background: #1d4ed8; }
     #status { margin-top: 20px; font-weight: bold; color: #111827; }
@@ -24,8 +16,7 @@
 </head>
 <body>
   <h1>🚌 Bus GPS Tracker — Driver</h1>
-
-  <input type="text" id="busIdInput" placeholder="Enter Your Bus ID" />
+  <input type="text" id="busIdInput" placeholder="Enter Bus ID">
   <button id="startBtn">Start Tracking (High Accuracy)</button>
   <div id="status">Waiting for input...</div>
 
@@ -47,73 +38,55 @@
       return new Date(now.getTime() + istOffset * 60 * 1000).toISOString();
     }
 
-    startBtn.addEventListener("click", async () => {
-      if (watching) {
-        alert("Tracking already active!");
-        return;
-      }
+    // Ensure DOM is ready
+    window.onload = () => {
+      startBtn.addEventListener("click", async () => {
+        if (watching) { alert("Tracking already active!"); return; }
 
-      BUS_ID = busIdInput.value.trim();
-      if (!BUS_ID) return alert("Please enter your Bus ID.");
+        BUS_ID = busIdInput.value.trim();
+        if (!BUS_ID) return alert("Please enter your Bus ID.");
 
-      statusDiv.innerText = "Checking Bus ID...";
+        statusDiv.innerText = "Checking Bus ID...";
 
-      try {
-        // Optional: check if bus exists in Supabase
-        const { data: buses, error } = await supabase.from("buses").select("bus_id").eq("bus_id", BUS_ID).limit(1);
-        if (error) throw error;
-        if (!buses || buses.length === 0) {
-          return statusDiv.innerText = "Bus ID not found. Please check!";
+        try {
+          const { data: buses, error } = await supabase.from("buses")
+            .select("bus_id").eq("bus_id", BUS_ID).limit(1);
+          if (error) throw error;
+          if (!buses || buses.length === 0) return statusDiv.innerText = "Bus ID not found.";
+
+          statusDiv.innerText = `Bus ID found! Starting GPS tracking...`;
+          watching = true;
+
+          if (!navigator.geolocation) return alert("Geolocation not supported by your browser.");
+
+          navigator.geolocation.watchPosition(async (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const speed = pos.coords.speed || 0;
+            const heading = pos.coords.heading || 0;
+            const updated_at = getISTTimestamp();
+
+            statusDiv.innerText = `📡 Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})}`;
+
+            try {
+              await supabase.from("bus_locations").insert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }]);
+              await supabase.from("latest_positions").upsert([{ bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }], { onConflict: ['bus_id'] });
+            } catch (err) {
+              console.error("Supabase error:", err);
+              statusDiv.innerText = "Error sending GPS: " + err.message;
+            }
+
+          }, (err) => {
+            console.error("GPS error:", err);
+            statusDiv.innerText = "GPS error: " + err.message;
+          }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+
+        } catch (err) {
+          console.error(err);
+          statusDiv.innerText = "Error: " + err.message;
         }
-
-        statusDiv.innerText = `Bus ID found! Starting GPS tracking...`;
-
-        if (!navigator.geolocation) {
-          alert("Geolocation not supported by your browser.");
-          return;
-        }
-
-        watching = true;
-
-        navigator.geolocation.watchPosition(async (pos) => {
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const speed = pos.coords.speed || 0;
-          const heading = pos.coords.heading || 0;
-          const updated_at = getISTTimestamp();
-
-          statusDiv.innerText = `📡 Sending GPS: ${lat.toFixed(6)}, ${lng.toFixed(6)} at ${new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata'})}`;
-
-          try {
-            // Insert into bus_locations
-            await supabase.from("bus_locations").insert([
-              { bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }
-            ]);
-
-            // Update latest_positions
-            await supabase.from("latest_positions").upsert([
-              { bus_id: BUS_ID, latitude: lat, longitude: lng, speed, heading, updated_at }
-            ], { onConflict: ['bus_id'] });
-
-          } catch (err) {
-            console.error("Supabase error:", err);
-            statusDiv.innerText = "Error sending GPS: " + err.message;
-          }
-
-        }, (err) => {
-          console.error("GPS error:", err);
-          statusDiv.innerText = "GPS error: " + err.message;
-        }, {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 0
-        });
-
-      } catch (err) {
-        console.error(err);
-        statusDiv.innerText = "Error: " + err.message;
-      }
-    });
+      });
+    };
   </script>
 </body>
 </html>
