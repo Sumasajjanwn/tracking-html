@@ -1,123 +1,192 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Advanced Bus GPS Tracker (Mobile)</title>
+<title>Advanced Bus GPS Tracker</title>
+
 <style>
-  body { font-family: Arial; padding: 20px; }
-  input, button { width: 100%; padding: 10px; margin: 5px 0; }
-  #status { margin-top: 15px; font-weight: bold; color: green; }
+body { font-family: Arial; padding:20px; }
+input,button { width:100%; padding:10px; margin:5px 0; }
+#status { margin-top:15px; font-weight:bold; color:green; }
 </style>
 </head>
+
 <body>
+
 <h2>Advanced Bus GPS Tracker</h2>
+
 <input type="text" id="busIdInput" placeholder="Enter Bus ID">
 <button id="startBtn">Start Tracking</button>
-<div id="status">Waiting for input...</div>
+<button id="stopBtn">Stop Tracking</button>
+
+<div id="status">Waiting...</div>
 
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>
+
 const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I"; 
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
+
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const busIdInput = document.getElementById("busIdInput");
 const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
 const statusDiv = document.getElementById("status");
 
 let BUS_ID = null;
+let watchId = null;
 let lastPositions = [];
 let totalDistance = 0;
 
-function getISTTimestamp() {
-  const now = new Date();
-  return new Date(now.getTime() + 5.5*60*60*1000).toISOString(); // IST
-}
-
-function calculateDistance(pos1, pos2){
+function calculateDistance(pos1,pos2){
   const R = 6371e3;
-  const toRad = x => x*Math.PI/180;
-  const φ1 = toRad(pos1.lat), φ2 = toRad(pos2.lat);
+  const toRad = x=>x*Math.PI/180;
+  const φ1 = toRad(pos1.lat);
+  const φ2 = toRad(pos2.lat);
   const Δφ = toRad(pos2.lat-pos1.lat);
   const Δλ = toRad(pos2.lng-pos1.lng);
-  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
-  const c = 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R*c; // meters
+  const a = Math.sin(Δφ/2)**2 +
+            Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  const c = 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  return R*c;
 }
 
-function calculateSpeed(pos1,pos2){
-  const dist = calculateDistance(pos1,pos2);
-  const timeDiff = (new Date(pos2.time)-new Date(pos1.time))/1000;
-  return timeDiff>0 ? (dist/timeDiff*3.6).toFixed(2) : 0;
+function calculateSpeed(p1,p2){
+  const dist = calculateDistance(p1,p2);
+  const timeDiff = (new Date(p2.time)-new Date(p1.time))/1000;
+  return timeDiff>0 ? Number((dist/timeDiff*3.6).toFixed(2)) : 0;
 }
 
-// Optional: Next stop for ETA
-const NEXT_STOP = {lat: 20.5937, lng: 78.9629}; // Replace with actual stop coordinates
-
-function calculateETA(current, stop, speed){
-  const dist = calculateDistance(current, stop)/1000; // km
-  if(speed>0) return (dist/speed*60).toFixed(0); // minutes
-  return "N/A";
+function calculateETA(current,stop,speed){
+  const dist = calculateDistance(current,stop)/1000;
+  return speed>0 ? (dist/speed*60).toFixed(0) : "N/A";
 }
 
 startBtn.onclick = async () => {
+
+  if(watchId){
+    alert("Already tracking!");
+    return;
+  }
+
   const busId = busIdInput.value.trim();
   if(!busId) return alert("Enter Bus ID");
 
   statusDiv.innerText="Checking Bus ID...";
-  try{
-    const { data: buses } = await db.from("buses").select("bus_id, bus_number").eq("bus_id", busId).limit(1);
-    if(!buses || buses.length===0) return statusDiv.innerText="Bus ID does not exist!";
-    BUS_ID = busId;
-    statusDiv.innerText=`Bus found! Tracking started.`;
-    startTracking();
-  }catch(err){
-    console.error(err);
-    statusDiv.innerText="Error: "+err.message;
+
+  const { data,error } = await db
+      .from("buses")
+      .select("bus_id")
+      .eq("bus_id",busId)
+      .limit(1);
+
+  if(error || !data || data.length===0){
+    statusDiv.innerText="Bus ID not found!";
+    return;
+  }
+
+  BUS_ID = busId;
+  startTracking();
+};
+
+stopBtn.onclick = ()=>{
+  if(watchId){
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    statusDiv.innerText="Tracking stopped.";
   }
 };
 
 function startTracking(){
-  if(!navigator.geolocation){ alert("Geolocation not supported"); return; }
 
-  setInterval(()=>{
-    navigator.geolocation.getCurrentPosition(async pos=>{
-      const lat = pos.coords.latitude;
-      const lng = pos.coords.longitude;
-      const updated_at = getISTTimestamp();
+  if(!navigator.geolocation){
+    alert("Geolocation not supported");
+    return;
+  }
 
-      lastPositions.push({lat,lng,time:updated_at});
+  watchId = navigator.geolocation.watchPosition(
+    async position => {
+
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      const accuracy = position.coords.accuracy;
+
+      // Ignore low accuracy
+      if(accuracy>50){
+        console.log("Low accuracy, skipped");
+        return;
+      }
+
+      const updated_at = new Date().toISOString();
+
+      const currentPos = {lat,lng,time:updated_at};
+
+      lastPositions.push(currentPos);
       if(lastPositions.length>5) lastPositions.shift();
 
-      // Smooth GPS
-      const avgLat = lastPositions.reduce((s,p)=>s+p.lat,0)/lastPositions.length;
-      const avgLng = lastPositions.reduce((s,p)=>s+p.lng,0)/lastPositions.length;
+      // Movement filter (20 meters)
+      if(lastPositions.length>1){
+        const movement = calculateDistance(
+          lastPositions[lastPositions.length-2],
+          lastPositions[lastPositions.length-1]
+        );
+        if(movement<20) return;
+      }
 
       let speed=0;
+
       if(lastPositions.length>1){
-        speed = calculateSpeed(lastPositions[lastPositions.length-2], lastPositions[lastPositions.length-1]);
-        totalDistance += calculateDistance(lastPositions[lastPositions.length-2], lastPositions[lastPositions.length-1])/1000;
+        speed = calculateSpeed(
+          lastPositions[lastPositions.length-2],
+          lastPositions[lastPositions.length-1]
+        );
+        totalDistance += calculateDistance(
+          lastPositions[lastPositions.length-2],
+          lastPositions[lastPositions.length-1]
+        )/1000;
       }
 
-      const eta = calculateETA({lat:avgLat,lng:avgLng}, NEXT_STOP, speed);
-
-      statusDiv.innerText=`Lat:${avgLat.toFixed(6)}, Lng:${avgLng.toFixed(6)} | Speed:${speed} km/h | Distance:${totalDistance.toFixed(2)} km | ETA:${eta} min | ${new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'})}`;
+      statusDiv.innerText=
+      `Lat:${lat.toFixed(6)}
+Lng:${lng.toFixed(6)}
+Speed:${speed} km/h
+Distance:${totalDistance.toFixed(2)} km
+Time:${new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}`;
 
       try{
-        await db.from("bus_locations").insert([{bus_id:BUS_ID,latitude:avgLat,longitude:avgLng,updated_at}]);
-        await db.from("latest_positions").upsert([{bus_id:BUS_ID,latitude:avgLat,longitude:avgLng,updated_at}], {onConflict:["bus_id"]});
+        await db.from("bus_locations").insert([{
+          bus_id:BUS_ID,
+          latitude:lat,
+          longitude:lng,
+          updated_at
+        }]);
+
+        await db.from("latest_positions").upsert([{
+          bus_id:BUS_ID,
+          latitude:lat,
+          longitude:lng,
+          updated_at
+        }],{onConflict:["bus_id"]});
+
       }catch(err){
-        console.error("Supabase error:",err);
-        statusDiv.innerText="Error sending GPS: "+err.message;
+        console.log(err);
       }
-    }, err=>{
-      console.error(err);
-      statusDiv.innerText="GPS error: "+err.message;
-    });
-  },5000);
+
+    },
+    error=>{
+      statusDiv.innerText="GPS Error: "+error.message;
+    },
+    {
+      enableHighAccuracy:true,
+      timeout:5000,
+      maximumAge:0
+    }
+  );
 }
+
 </script>
 </body>
 </html>
