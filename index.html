@@ -1,39 +1,11 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Advanced Bus GPS Tracker</title>
-
-<style>
-body { font-family: Arial; padding:20px; }
-input,button { width:100%; padding:10px; margin:5px 0; }
-#status { margin-top:15px; font-weight:bold; color:green; }
-</style>
-</head>
-
-<body>
-
-<h2>Advanced Bus GPS Tracker</h2>
-
-<input type="text" id="busIdInput" placeholder="Enter Bus ID">
-<button id="startBtn">Start Tracking</button>
-<button id="stopBtn">Stop Tracking</button>
-
-<div id="status">Waiting...</div>
-
-<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <script>
-
 const SUPABASE_URL = "https://tiokiqoympxwfrjsefsy.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRpb2tpcW95bXB4d2ZyanNlZnN5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkwMzU2NzAsImV4cCI6MjA3NDYxMTY3MH0.JiOA2nqekJcc3YtTlDZQY9J32I7BXJwzaJF3mJKKD6I";
-
+const SUPABASE_ANON_KEY = "YOUR_ANON_KEY";
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const busIdInput = document.getElementById("busIdInput");
 const startBtn = document.getElementById("startBtn");
-const stopBtn = document.getElementById("stopBtn");
 const statusDiv = document.getElementById("status");
 
 let BUS_ID = null;
@@ -41,13 +13,13 @@ let watchId = null;
 let lastPositions = [];
 let totalDistance = 0;
 
-function calculateDistance(pos1,pos2){
+function calculateDistance(p1,p2){
   const R = 6371e3;
   const toRad = x=>x*Math.PI/180;
-  const φ1 = toRad(pos1.lat);
-  const φ2 = toRad(pos2.lat);
-  const Δφ = toRad(pos2.lat-pos1.lat);
-  const Δλ = toRad(pos2.lng-pos1.lng);
+  const φ1 = toRad(p1.lat);
+  const φ2 = toRad(p2.lat);
+  const Δφ = toRad(p2.lat-p1.lat);
+  const Δλ = toRad(p2.lng-p1.lng);
   const a = Math.sin(Δφ/2)**2 +
             Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
   const c = 2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
@@ -60,12 +32,7 @@ function calculateSpeed(p1,p2){
   return timeDiff>0 ? Number((dist/timeDiff*3.6).toFixed(2)) : 0;
 }
 
-function calculateETA(current,stop,speed){
-  const dist = calculateDistance(current,stop)/1000;
-  return speed>0 ? (dist/speed*60).toFixed(0) : "N/A";
-}
-
-startBtn.onclick = async () => {
+startBtn.onclick = async ()=>{
 
   if(watchId){
     alert("Already tracking!");
@@ -74,8 +41,6 @@ startBtn.onclick = async () => {
 
   const busId = busIdInput.value.trim();
   if(!busId) return alert("Enter Bus ID");
-
-  statusDiv.innerText="Checking Bus ID...";
 
   const { data,error } = await db
       .from("buses")
@@ -89,18 +54,6 @@ startBtn.onclick = async () => {
   }
 
   BUS_ID = busId;
-  startTracking();
-};
-
-stopBtn.onclick = ()=>{
-  if(watchId){
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-    statusDiv.innerText="Tracking stopped.";
-  }
-};
-
-function startTracking(){
 
   if(!navigator.geolocation){
     alert("Geolocation not supported");
@@ -108,85 +61,69 @@ function startTracking(){
   }
 
   watchId = navigator.geolocation.watchPosition(
-    async position => {
+    async pos => {
 
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      const accuracy = position.coords.accuracy;
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
 
-      // Ignore low accuracy
-      if(accuracy>50){
-        console.log("Low accuracy, skipped");
+      if(pos.coords.accuracy > 60){
+        statusDiv.innerText="Low GPS accuracy, waiting...";
         return;
       }
 
       const updated_at = new Date().toISOString();
 
-      const currentPos = {lat,lng,time:updated_at};
+      const current = {lat,lng,time:updated_at};
 
-      lastPositions.push(currentPos);
+      lastPositions.push(current);
       if(lastPositions.length>5) lastPositions.shift();
 
-      // Movement filter (20 meters)
-      if(lastPositions.length>1){
-        const movement = calculateDistance(
-          lastPositions[lastPositions.length-2],
-          lastPositions[lastPositions.length-1]
-        );
-        if(movement<20) return;
-      }
-
-      let speed=0;
+      let speed = 0;
 
       if(lastPositions.length>1){
-        speed = calculateSpeed(
-          lastPositions[lastPositions.length-2],
-          lastPositions[lastPositions.length-1]
-        );
-        totalDistance += calculateDistance(
-          lastPositions[lastPositions.length-2],
-          lastPositions[lastPositions.length-1]
-        )/1000;
+        const prev = lastPositions[lastPositions.length-2];
+        const movement = calculateDistance(prev,current);
+
+        if(movement < 15) return; // ignore tiny movement
+
+        speed = calculateSpeed(prev,current);
+        totalDistance += movement/1000;
       }
 
-      statusDiv.innerText=
-      `Lat:${lat.toFixed(6)}
-Lng:${lng.toFixed(6)}
-Speed:${speed} km/h
-Distance:${totalDistance.toFixed(2)} km
-Time:${new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}`;
+      statusDiv.innerText =
+        `Lat: ${lat.toFixed(6)}
+Lng: ${lng.toFixed(6)}
+Speed: ${speed} km/h
+Distance: ${totalDistance.toFixed(2)} km
+Time: ${new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}`;
 
-      try{
-        await db.from("bus_locations").insert([{
-          bus_id:BUS_ID,
-          latitude:lat,
-          longitude:lng,
-          updated_at
-        }]);
+      await db.from("bus_locations").insert([{
+        bus_id:BUS_ID,
+        latitude:lat,
+        longitude:lng,
+        updated_at
+      }]);
 
-        await db.from("latest_positions").upsert([{
-          bus_id:BUS_ID,
-          latitude:lat,
-          longitude:lng,
-          updated_at
-        }],{onConflict:["bus_id"]});
-
-      }catch(err){
-        console.log(err);
-      }
+      await db.from("latest_positions").upsert([{
+        bus_id:BUS_ID,
+        latitude:lat,
+        longitude:lng,
+        updated_at
+      }],{onConflict:["bus_id"]});
 
     },
-    error=>{
-      statusDiv.innerText="GPS Error: "+error.message;
+    err=>{
+      if(err.code === 1){
+        statusDiv.innerText="Location permission denied!";
+      }else{
+        statusDiv.innerText="GPS Error: "+err.message;
+      }
     },
     {
-      enableHighAccuracy:true,
-      timeout:5000,
+      enableHighAccuracy:false,
+      timeout:10000,
       maximumAge:0
     }
   );
-}
-
+};
 </script>
-</body>
-</html>
